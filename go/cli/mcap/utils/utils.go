@@ -6,17 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"time"
 
 	"cloud.google.com/go/storage"
+
 	"github.com/olekukonko/tablewriter"
 	"github.com/schollz/progressbar/v3"
 )
 
 var (
-	remoteFileRegex = regexp.MustCompile(`(?P<Scheme>\w+)://(?P<Bucket>[a-z0-9_.-]+)/(?P<Filename>.*)`)
+	remoteFileRegex = regexp.MustCompile(`(?P<Scheme>\w+)://(?P<Bucket>[a-z0-9_.-]+(?::\d{1,5})?)/(?P<Filename>.*)`)
 )
 
 func GetScheme(filename string) (match1 string, match2 string, match3 string) {
@@ -60,6 +62,11 @@ func GetReader(ctx context.Context, filename string) (func() error, io.ReadSeekC
 			if err != nil {
 				return closeReader, nil, fmt.Errorf("failed to build read seek closer: %w", err)
 			}
+		case "http", "https":
+			rs, err = NewHTTPReader(http.DefaultClient, filename)
+			if err != nil {
+				return closeReader, nil, fmt.Errorf("failed to fetch remote file: %w", err)
+			}
 		default:
 			return closeReader, nil, fmt.Errorf("unsupported remote file scheme: %s", scheme)
 		}
@@ -90,6 +97,11 @@ func WithReader(ctx context.Context, filename string, f func(remote bool, rs io.
 			rs, err = NewGCSReadSeekCloser(ctx, object)
 			if err != nil {
 				return fmt.Errorf("failed to build read seek closer: %w", err)
+			}
+		case "http", "https":
+			rs, err = NewHTTPReader(http.DefaultClient, filename)
+			if err != nil {
+				return fmt.Errorf("failed to fetch remote file: %w", err)
 			}
 		default:
 			return fmt.Errorf("unsupported remote file scheme: %s", scheme)
