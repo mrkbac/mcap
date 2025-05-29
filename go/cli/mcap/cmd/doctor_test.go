@@ -2,7 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/foxglove/mcap/go/mcap"
@@ -63,4 +67,38 @@ func TestPassesIndexedMessagesWithRepeatedSchemas(t *testing.T) {
 	doctor := newMcapDoctor(rs)
 	diagnosis := doctor.Examine()
 	assert.Empty(t, diagnosis.Errors)
+}
+
+func TestNoErrorOnRepeatedSchemaAndChannel(t *testing.T) {
+	inputs := []string{}
+	err := filepath.Walk("../../../../tests/conformance/data/OneMessage/", func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() && filepath.Ext(path) == ".mcap" {
+			features := strings.Split(strings.TrimSuffix(info.Name(), filepath.Ext(info.Name())), "-")
+
+			// Files repeating schema and channel must not cause errors
+			if slices.Contains(features, "rsh") && slices.Contains(features, "rch") {
+				inputs = append(inputs, path)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+
+	for _, path := range inputs {
+		t.Run(path, func(t *testing.T) {
+			rs, err := os.Open(path)
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, rs.Close())
+			}()
+			doctor := newMcapDoctor(rs)
+			diagnosis := doctor.Examine()
+			assert.Empty(t, diagnosis.Errors)
+		})
+	}
+	require.NoError(t, err)
 }
