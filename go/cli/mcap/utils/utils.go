@@ -46,7 +46,6 @@ func StdoutRedirected() bool {
 
 func GetReader(ctx context.Context, filename string) (func() error, io.ReadSeekCloser, error) {
 	var rs io.ReadSeekCloser
-	var err error
 	closeReader := func() error { return nil }
 	scheme, bucket, path := GetScheme(filename)
 	if scheme != "" {
@@ -63,18 +62,20 @@ func GetReader(ctx context.Context, filename string) (func() error, io.ReadSeekC
 				return closeReader, nil, fmt.Errorf("failed to build read seek closer: %w", err)
 			}
 		case "http", "https":
-			rs, err = NewHTTPReader(http.DefaultClient, filename)
+			httpRS, err := NewHTTPReader(http.DefaultClient, filename)
 			if err != nil {
 				return closeReader, nil, fmt.Errorf("failed to fetch remote file: %w", err)
 			}
+			rs = NewBufferedReadSeekerCloser(httpRS, 1024*4)
 		default:
 			return closeReader, nil, fmt.Errorf("unsupported remote file scheme: %s", scheme)
 		}
 	} else {
-		rs, err = os.Open(path)
+		rsFs, err := os.Open(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open local file")
 		}
+		rs = NewBufferedReadSeekerCloser(rsFs, 1024*4)
 	}
 
 	return closeReader, rs, nil
@@ -99,10 +100,11 @@ func WithReader(ctx context.Context, filename string, f func(remote bool, rs io.
 				return fmt.Errorf("failed to build read seek closer: %w", err)
 			}
 		case "http", "https":
-			rs, err = NewHTTPReader(http.DefaultClient, filename)
+			httpRS, err := NewHTTPReader(http.DefaultClient, filename)
 			if err != nil {
 				return fmt.Errorf("failed to fetch remote file: %w", err)
 			}
+			rs = NewBufferedReadSeekerCloser(httpRS, 1024*4*4)
 		default:
 			return fmt.Errorf("unsupported remote file scheme: %s", scheme)
 		}
