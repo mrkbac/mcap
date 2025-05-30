@@ -35,6 +35,27 @@ func TestGetScheme(t *testing.T) {
 			"foo-bar.com123",
 			"bar/baz.txt",
 		},
+		{
+			"remote file http",
+			"http://example.com/foo/bar/baz.txt",
+			"http",
+			"example.com",
+			"foo/bar/baz.txt",
+		},
+		{
+			"remote file https",
+			"https://example.com/foo/bar/baz.txt",
+			"https",
+			"example.com",
+			"foo/bar/baz.txt",
+		},
+		{
+			"remote file https with query",
+			"https://example.com/foo/bar/baz.txt?query=123",
+			"https",
+			"example.com",
+			"foo/bar/baz.txt?query=123",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.assertion, func(t *testing.T) {
