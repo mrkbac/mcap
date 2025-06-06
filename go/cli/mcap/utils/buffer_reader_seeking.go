@@ -2,60 +2,17 @@ package utils
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 )
 
-type debugReadSeekCloser struct {
-	inner io.ReadSeekCloser
-	// debug
-	totalBytes int64 // total bytes read (for debugging)
-	totalReads int64 // total requests made (for debugging)
-}
-
-var _ io.ReadSeekCloser = (*debugReadSeekCloser)(nil)
-
-func (d *debugReadSeekCloser) Read(p []byte) (int, error) {
-	n, err := d.inner.Read(p)
-	if err == nil {
-		d.totalBytes += int64(n)
-		d.totalReads++
-
-		fmt.Printf("Read %d bytes, total %d bytes read, %d reads made\n", n, d.totalBytes, d.totalReads)
-	}
-	return n, err
-}
-
-func (d *debugReadSeekCloser) Seek(offset int64, whence int) (int64, error) {
-	if offset != 0 || whence != io.SeekCurrent {
-		fmt.Printf("Seek called with offset %d, whence %d\n", offset, whence)
-	}
-	return d.inner.Seek(offset, whence)
-}
-
-// Close closes the underlying resource.
-func (d *debugReadSeekCloser) Close() error {
-	return d.inner.Close()
-}
-
-type peek interface {
+type PeekableReadSeeker interface {
+	io.ReadSeeker
 	Peek(n int) ([]byte, error)
 }
 
-func (d *debugReadSeekCloser) Peek(n int) ([]byte, error) {
-	// Peek is not supported by ReadSeekCloser, return an error.
-	if pr, ok := d.inner.(peek); ok {
-		data, err := pr.Peek(n)
-		if err != nil {
-			return nil, err
-		}
-		if len(data) < n {
-			return nil, io.ErrUnexpectedEOF
-		}
-		return data, nil
-	}
-	return nil, fmt.Errorf("Peek not supported by %T", d.inner)
-}
+// Ensure debugReadSeekCloser implements the interfaces we expect.
+var _ io.ReadSeekCloser = (*bufferedReadSeekerCloser)(nil)
+var _ PeekableReadSeeker = (*bufferedReadSeekerCloser)(nil)
 
 // bufferedReadSeekerCloser wraps a ReadSeekCloser with a buffer.
 type bufferedReadSeekerCloser struct {
@@ -64,8 +21,7 @@ type bufferedReadSeekerCloser struct {
 }
 
 // NewBufferedReadSeekerCloser creates a new wrapper with buffer size 'size'.
-func NewBufferedReadSeekerCloser(rsc io.ReadSeekCloser, size int) *bufferedReadSeekerCloser {
-	inner := &debugReadSeekCloser{inner: rsc}
+func NewBufferedReadSeekerCloser(inner io.ReadSeekCloser, size int) *bufferedReadSeekerCloser {
 	return &bufferedReadSeekerCloser{
 		inner: inner,
 		buf:   bufio.NewReaderSize(inner, size),

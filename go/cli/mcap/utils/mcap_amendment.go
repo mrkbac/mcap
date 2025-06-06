@@ -184,7 +184,7 @@ func readSummarySection(r io.Reader) (*summarySection, error) {
 // data the summarySection was originally parsed from. All offsets and CRCs are
 // updated to account.
 func writeSummaryBytes(w io.Writer, section *summarySection, summaryStart int64) error {
-	wc := newChecksummingWriteCounter(w, 0)
+	wc := NewChecksummingWriteCounter(w, 0)
 	writer, err := mcap.NewWriter(wc, &mcap.WriterOptions{
 		SkipMagic: true,
 	})
@@ -396,7 +396,7 @@ func extendDataSection(
 	attachments []*mcap.Attachment,
 	metadata []*mcap.Metadata,
 ) (int64, []*mcap.AttachmentIndex, []*mcap.MetadataIndex, error) {
-	cw := newChecksummingWriteCounter(w, startCRC)
+	cw := NewChecksummingWriteCounter(w, startCRC)
 	writer, err := mcap.NewWriter(cw, &mcap.WriterOptions{
 		SkipMagic: true,
 	})

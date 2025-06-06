@@ -252,11 +252,6 @@ type RebuildData struct {
 	DataSectionCRC uint32
 }
 
-type PeekableReadSeeker interface {
-	io.ReadSeeker
-	Peek(n int) ([]byte, error)
-}
-
 // RebuildInfo reads an MCAP file and rebuilds the info from it.
 func RebuildInfo(bufReader PeekableReadSeeker, includeCRC bool) (*RebuildData, error) {
 	// bufReader := bufio
@@ -437,7 +432,6 @@ func RebuildInfo(bufReader PeekableReadSeeker, includeCRC bool) (*RebuildData, e
 				rebuildData.ContainsFaultyChunks = true
 				continue
 			}
-			// lazyChunk.LoadRecords()
 
 			if info.Statistics.MessageCount == 0 {
 				info.Statistics.MessageStartTime = lazyChunk.MessageStartTime

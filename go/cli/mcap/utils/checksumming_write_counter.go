@@ -5,29 +5,29 @@ import (
 	"io"
 )
 
-type checksummingWriteCounter struct {
+type ChecksummingWriteCounter struct {
 	w     io.Writer
 	count int64
 	crc   uint32
 }
 
-func (cw *checksummingWriteCounter) Write(p []byte) (n int, err error) {
+func (cw *ChecksummingWriteCounter) Write(p []byte) (n int, err error) {
 	n, err = cw.w.Write(p)
 	cw.count += int64(n)
 	cw.crc = crc32.Update(cw.crc, crc32.IEEETable, p)
 	return n, err
 }
 
-func (cw *checksummingWriteCounter) Count() int64 {
+func (cw *ChecksummingWriteCounter) Count() int64 {
 	return cw.count
 }
 
-func (cw *checksummingWriteCounter) CRC() uint32 {
+func (cw *ChecksummingWriteCounter) CRC() uint32 {
 	return cw.crc
 }
 
-func newChecksummingWriteCounter(w io.Writer, initialCRC uint32) *checksummingWriteCounter {
-	return &checksummingWriteCounter{
+func NewChecksummingWriteCounter(w io.Writer, initialCRC uint32) *ChecksummingWriteCounter {
+	return &ChecksummingWriteCounter{
 		w:   w,
 		crc: initialCRC,
 	}

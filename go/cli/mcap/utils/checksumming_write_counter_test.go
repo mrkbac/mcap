@@ -14,7 +14,7 @@ func TestChecksummingWriteCounter(t *testing.T) {
 	fullCRC := crc32.ChecksumIEEE(data)
 	initialCRC := crc32.ChecksumIEEE(data[:5])
 	buf := &bytes.Buffer{}
-	cw := newChecksummingWriteCounter(buf, initialCRC)
+	cw := NewChecksummingWriteCounter(buf, initialCRC)
 	n, err := cw.Write(data[5:])
 	require.NoError(t, err)
 	assert.Equal(t, len(data[5:]), n, "number of bytes written does not match expected")
