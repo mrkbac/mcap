@@ -8,6 +8,8 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/foxglove/mcap/go/cli/mcap/utils"
 	"github.com/foxglove/mcap/go/mcap"
@@ -16,9 +18,15 @@ import (
 )
 
 type rechunkOptions struct {
-	chunkSize     int64
-	compression   mcap.CompressionFormat
-	groupedTopics []string
+	chunkSize        int64
+	compression      mcap.CompressionFormat
+	topicGroups      []string
+	individualChunks bool
+}
+
+type topicGroup struct {
+	name     string
+	patterns []regexp.Regexp
 }
 
 type chunkWriter struct {
@@ -28,10 +36,15 @@ type chunkWriter struct {
 	endTime      uint64
 	messageIndex map[uint16]*mcap.MessageIndex
 
-	w *ChecksummingWriteCounter
+	w *utils.ChecksummingWriteCounter
+
+	// Track what's been written to this chunk
+	writtenSchemas  map[uint16]bool
+	writtenChannels map[uint16]bool
 
 	//debug
 	topics []string
+	group  string
 }
 
 func newChunkWriter(ops *rechunkOptions) (*chunkWriter, error) {
@@ -45,11 +58,13 @@ func newChunkWriter(ops *rechunkOptions) (*chunkWriter, error) {
 	}
 
 	return &chunkWriter{
-		buf:          buf,
-		mcapWriter:   mcapWriter,
-		startTime:    0,
-		endTime:      0,
-		messageIndex: make(map[uint16]*mcap.MessageIndex),
+		buf:             buf,
+		mcapWriter:      mcapWriter,
+		startTime:       0,
+		endTime:         0,
+		messageIndex:    make(map[uint16]*mcap.MessageIndex),
+		writtenSchemas:  make(map[uint16]bool),
+		writtenChannels: make(map[uint16]bool),
 	}, nil
 }
 
@@ -84,14 +99,17 @@ func (w *chunkWriter) reset() {
 	w.startTime = 0
 	w.endTime = 0
 	w.messageIndex = make(map[uint16]*mcap.MessageIndex)
+	w.writtenSchemas = make(map[uint16]bool)
+	w.writtenChannels = make(map[uint16]bool)
 }
 
 func (w *chunkWriter) finalize(mcapWriter *mcap.Writer) error {
-	compressedWriter := bytes.Buffer{}
 	uncompressedBytes := w.buf.Bytes()
 	uncompressedSize := len(uncompressedBytes)
 	uncompressedCRC := crc32.ChecksumIEEE(uncompressedBytes)
 
+	// Try compression to see if it's beneficial
+	compressedWriter := bytes.Buffer{}
 	zw, err := zstd.NewWriter(&compressedWriter, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return err
@@ -104,14 +122,32 @@ func (w *chunkWriter) finalize(mcapWriter *mcap.Writer) error {
 	}
 
 	compressedBytes := compressedWriter.Bytes()
+	compressedSize := len(compressedBytes)
 
-	chunk := &mcap.Chunk{
-		MessageStartTime: w.startTime,
-		MessageEndTime:   w.endTime,
-		UncompressedSize: uint64(uncompressedSize),
-		UncompressedCRC:  uncompressedCRC,
-		Compression:      "zstd",
-		Records:          compressedBytes,
+	// Calculate compression ratio and check if it provides at least 5% savings
+	compressionRatio := float64(compressedSize) / float64(uncompressedSize)
+	useCompression := compressionRatio <= 0.95 // 5% or more savings
+
+	var chunk *mcap.Chunk
+	if useCompression {
+		chunk = &mcap.Chunk{
+			MessageStartTime: w.startTime,
+			MessageEndTime:   w.endTime,
+			UncompressedSize: uint64(uncompressedSize),
+			UncompressedCRC:  uncompressedCRC,
+			Compression:      "zstd",
+			Records:          compressedBytes,
+		}
+	} else {
+		// Use uncompressed data if compression doesn't provide sufficient benefit
+		chunk = &mcap.Chunk{
+			MessageStartTime: w.startTime,
+			MessageEndTime:   w.endTime,
+			UncompressedSize: uint64(uncompressedSize),
+			UncompressedCRC:  uncompressedCRC,
+			Compression:      "",
+			Records:          uncompressedBytes,
+		}
 	}
 
 	w.reset()
@@ -131,16 +167,55 @@ func (w *chunkWriter) finalize(mcapWriter *mcap.Writer) error {
 		mcapWriter.Statistics.ChannelMessageCounts[channelID] += count
 	}
 
-	// topic,count,compressed size, uncompressed size, ratio
-	fmt.Printf("'%s',%d,%d,%d,%f\n",
+	// group,topic,count,final size, uncompressed size, ratio, compression used
+	finalSize := uncompressedSize
+	if useCompression {
+		finalSize = compressedSize
+	}
+	fmt.Printf("%s,'%s',%d,%d,%d,%f,%t\n",
+		w.group,
 		w.topics,
 		w.mcapWriter.Statistics.MessageCount,
-		len(compressedBytes),
+		finalSize,
 		uncompressedSize,
-		float64(uncompressedSize)/float64(len(compressedBytes)),
+		float64(uncompressedSize)/float64(finalSize),
+		useCompression,
 	)
 
 	return nil
+}
+
+// parseTopicGroups parses the topic group specifications
+// Each groupSpec contains space-separated regex patterns that belong to the same group
+func parseTopicGroups(groupSpecs []string) ([]topicGroup, error) {
+	var groups []topicGroup
+	for i, spec := range groupSpecs {
+		patternStrings := strings.Fields(spec)
+		if len(patternStrings) > 0 {
+			patterns, err := compileMatchers(patternStrings)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile regex patterns for group %d: %w", i+1, err)
+			}
+			groupName := fmt.Sprintf("group_%d", i+1)
+			groups = append(groups, topicGroup{
+				name:     groupName,
+				patterns: patterns,
+			})
+		}
+	}
+	return groups, nil
+}
+
+// getTopicGroup returns the group name for a topic, or "rest" if no group matches
+func getTopicGroup(topic string, groups []topicGroup) string {
+	for _, group := range groups {
+		for _, pattern := range group.patterns {
+			if pattern.MatchString(topic) {
+				return group.name
+			}
+		}
+	}
+	return "rest"
 }
 
 func rechunkRun(
@@ -148,7 +223,7 @@ func rechunkRun(
 	w io.Writer,
 	ops *rechunkOptions,
 ) error {
-	fmt.Println("topic,count,compressed,uncompressed,ratio")
+	fmt.Println("group,topic,count,final_size,uncompressed,ratio,compressed")
 	mcapWriter, err := mcap.NewWriter(w, &mcap.WriterOptions{
 		Chunked:     true,
 		ChunkSize:   ops.chunkSize,
@@ -191,16 +266,26 @@ func rechunkRun(
 
 	schemas := make(map[uint16]*mcap.Schema)
 	channels := make(map[uint16]*mcap.Channel)
-	channelChunks := make(map[uint16]*chunkWriter)
+
+	// Parse topic groups from command line options
+	topicGroups, err := parseTopicGroups(ops.topicGroups)
+	if err != nil {
+		return fmt.Errorf("failed to parse topic groups: %w", err)
+	}
+
+	// Map from group name to chunk writer
+	groupChunks := make(map[string]*chunkWriter)
+	// Map from channel ID to group name for quick lookup
+	channelGroups := make(map[uint16]string)
 
 	defer func() {
 		// cleanup and finalize any remaining chunks
-		for channelID, chunkWriter := range channelChunks {
+		for groupName, chunkWriter := range groupChunks {
 			err := chunkWriter.finalize(mcapWriter)
 			if err != nil {
 				fmt.Println("ERROR", err)
 			}
-			delete(channelChunks, channelID)
+			delete(groupChunks, groupName)
 		}
 	}()
 
@@ -260,46 +345,78 @@ func rechunkRun(
 			if _, ok := channels[channel.ID]; !ok {
 				channels[channel.ID] = channel
 				mcapWriter.AddChannel(channel)
+
+				// Determine which group this channel belongs to
+				var groupName string
+				if ops.individualChunks {
+					// Each topic gets its own chunk
+					groupName = channel.Topic
+				} else {
+					groupName = getTopicGroup(channel.Topic, topicGroups)
+				}
+				channelGroups[channel.ID] = groupName
 			}
 		case mcap.TokenMessage:
 			msg, err := mcap.ParseMessage(data)
 			if err != nil {
 				return err
 			}
-			if _, ok := channelChunks[msg.ChannelID]; !ok {
-				var channel *mcap.Channel
-				var schema *mcap.Schema
-				if channel, ok = channels[msg.ChannelID]; !ok {
-					return fmt.Errorf("message references unknown channel %d", msg.ChannelID)
-				}
-				if schema, ok = schemas[channel.SchemaID]; !ok {
-					return fmt.Errorf(
-						"channel %d references unknown schema %d",
-						msg.ChannelID,
-						channel.SchemaID,
-					)
-				}
 
+			// Get the group for this channel
+			groupName, ok := channelGroups[msg.ChannelID]
+			if !ok {
+				return fmt.Errorf("message references unknown channel %d", msg.ChannelID)
+			}
+
+			// Create chunk writer for this group if it doesn't exist
+			if _, ok := groupChunks[groupName]; !ok {
 				chunkWriter, err := newChunkWriter(ops)
+				if err != nil {
+					return err
+				}
+				chunkWriter.group = groupName
+				groupChunks[groupName] = chunkWriter
+			}
+
+			chunkWriter := groupChunks[groupName]
+
+			// Add schema and channel to chunk if not already present
+			var channel *mcap.Channel
+			var schema *mcap.Schema
+			if channel, ok = channels[msg.ChannelID]; !ok {
+				return fmt.Errorf("message references unknown channel %d", msg.ChannelID)
+			}
+			if schema, ok = schemas[channel.SchemaID]; !ok {
+				return fmt.Errorf(
+					"channel %d references unknown schema %d",
+					msg.ChannelID,
+					channel.SchemaID,
+				)
+			}
+
+			// Check if we need to add schema and channel to this chunk
+			// (we add them for each chunk since chunks are independent)
+			if !chunkWriter.writtenSchemas[schema.ID] {
 				if err := chunkWriter.writeSchema(schema); err != nil {
 					return err
 				}
+				chunkWriter.writtenSchemas[schema.ID] = true
+			}
+			if !chunkWriter.writtenChannels[channel.ID] {
 				if err := chunkWriter.writeChannel(channel); err != nil {
 					return err
 				}
-				if err != nil {
-					return err
-				}
-				channelChunks[msg.ChannelID] = chunkWriter
+				chunkWriter.writtenChannels[channel.ID] = true
 			}
-			channelChunks[msg.ChannelID].writeMessage(msg)
 
-			if len(channelChunks[msg.ChannelID].buf.Bytes()) >= int(ops.chunkSize) {
-				err := channelChunks[msg.ChannelID].finalize(mcapWriter)
+			chunkWriter.writeMessage(msg)
+
+			if len(chunkWriter.buf.Bytes()) >= int(ops.chunkSize) {
+				err := chunkWriter.finalize(mcapWriter)
 				if err != nil {
-					return fmt.Errorf("failed to finalize chunk for channel %d: %w", msg.ChannelID, err)
+					return fmt.Errorf("failed to finalize chunk for group %s: %w", groupName, err)
 				}
-				delete(channelChunks, msg.ChannelID)
+				delete(groupChunks, groupName)
 			}
 		case mcap.TokenDataEnd, mcap.TokenFooter:
 			// data section is over, either because the file is over or the summary section starts.
@@ -315,10 +432,7 @@ func init() {
 	var rechunkCmd = &cobra.Command{
 		Use:   "rechunk [file]",
 		Short: "Rechunk an MCAP file",
-		Long: `This subcommand reads an MCAP file and writes a new file with a different chunking strategy.
-
-usage:
-  mcap rechunk in.mcap -o out.mcap`,
+		Long:  "This subcommand reads an MCAP file and writes a new file with a different chunking strategy.",
 	}
 	output := rechunkCmd.PersistentFlags().StringP("output", "o", "", "output filename")
 	chunkSize := rechunkCmd.PersistentFlags().Int64P("chunk-size", "", 4*1024*1024, "chunk size of output file")
@@ -327,7 +441,8 @@ usage:
 		"zstd",
 		"compression algorithm to use on output file",
 	)
-	groupedTopics := rechunkCmd.PersistentFlags().StringSliceP("group", "g", nil, "group topics by this key")
+	topicGroups := rechunkCmd.PersistentFlags().StringSliceP("topic-group", "g", nil, "group topics by regex patterns (e.g., -g '/sensor.* /camera.*' -g '/gnss.* /gps.*')")
+	individualChunks := rechunkCmd.PersistentFlags().BoolP("individual", "i", false, "put each topic in its own chunk")
 	var compressionFormat mcap.CompressionFormat
 	switch *compression {
 	case CompressionFormatZstd:
@@ -391,9 +506,10 @@ usage:
 			writer = newWriter
 		}
 		err := rechunkRun(reader, writer, &rechunkOptions{
-			chunkSize:     *chunkSize,
-			compression:   compressionFormat,
-			groupedTopics: *groupedTopics,
+			chunkSize:        *chunkSize,
+			compression:      compressionFormat,
+			topicGroups:      *topicGroups,
+			individualChunks: *individualChunks,
 		})
 		if err != nil {
 			die("failed to recover: %s", err)
