@@ -11,7 +11,7 @@ jobs:
   spellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - run: corepack enable
@@ -26,7 +26,7 @@ jobs:
   conformance-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - run: corepack enable
@@ -41,7 +41,7 @@ jobs:
   conformance-cpp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -61,7 +61,7 @@ jobs:
   conformance-go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -80,7 +80,7 @@ jobs:
   conformance-python:
     runs-on: ubuntu-22.04 # required for python 3.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -99,7 +99,7 @@ jobs:
   conformance-typescript:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -114,7 +114,7 @@ jobs:
   conformance-kaitai-struct:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -127,9 +127,9 @@ jobs:
       - run: yarn test:conformance --runner ksy-
 
   conformance-swift:
-    runs-on: ubuntu-22.04 # https://github.com/swift-actions/setup-swift/issues/677
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -137,9 +137,9 @@ jobs:
         with:
           node-version: 20.x
           cache: yarn
-      - uses: swift-actions/setup-swift@v2
+      - uses: ./.github/actions/setup-swift
         with:
-          swift-version: "5.7"
+          swift-version: "6.1"
       - run: swift build
       - run: yarn install --immutable
       - run: yarn test:conformance:generate-inputs --verify
@@ -148,7 +148,7 @@ jobs:
   conformance-rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - run: corepack enable
@@ -172,7 +172,7 @@ jobs:
       run:
         working-directory: cpp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - uses: actions/cache@v4
@@ -191,7 +191,7 @@ jobs:
       run:
         working-directory: cpp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - uses: actions/cache@v4
@@ -213,7 +213,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - run: corepack enable
@@ -270,7 +270,7 @@ jobs:
   typescript-examples:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
       - run: corepack enable
@@ -300,7 +300,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - uses: actions/setup-python@v5
@@ -385,7 +385,7 @@ jobs:
       run:
         working-directory: go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - uses: actions/setup-go@v5
@@ -401,12 +401,11 @@ jobs:
           startsWith(github.ref, 'refs/tags/go/mcap/v')
         run: make -C cli/mcap build && ./check_tag.sh cli/mcap/bin/mcap
 
-  go-release-cli:
+  go-cli:
     permissions:
       contents: write
     needs:
       - go
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/releases/mcap-cli/v')
     defaults:
       run:
         working-directory: go/cli/mcap
@@ -425,6 +424,14 @@ jobs:
             env:
               CC: aarch64-linux-gnu-gcc
               CXX: aarch64-linux-gnu-g++
+          - os: linux
+            image: ubuntu-latest
+            arch: arm
+            setup: sudo apt-get update && sudo apt-get install -qq gcc-arm-linux-gnueabihf
+            env:
+              CC: arm-linux-gnueabihf-gcc
+              CXX: arm-linux-gnueabihf-g++
+              GOARM: 7
           - os: macos
             image: macos-latest
             arch: amd64
@@ -438,12 +445,12 @@ jobs:
             arch: amd64
             env: {}
 
-    name: Build (${{ matrix.os }}/${{ matrix.arch }})
+    name: go-cli (${{ matrix.os }}/${{ matrix.arch }})
     runs-on: ${{ matrix.image }}
     env: ${{ matrix.env }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: "0"
       - run: git fetch --depth=1 origin +refs/tags/*:refs/tags/*
@@ -457,10 +464,17 @@ jobs:
         env:
           GOARCH: ${{ matrix.arch }}
           OUTPUT: mcap-${{ matrix.os }}-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcap-cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: go/cli/mcap/bin/mcap-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 7
       - name: Make release notes
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/releases/mcap-cli/v')
         run: |
           git log --oneline --no-merges --first-parent --grep CLI --decorate-refs=refs $(git describe --tags $(git rev-list --tags=releases/mcap-cli --max-count=1))..HEAD > ${{ github.workspace }}-CHANGELOG.txt
       - name: Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/releases/mcap-cli/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ./go/cli/mcap/bin/*
@@ -468,14 +482,14 @@ jobs:
           draft: false
 
   swift:
-    runs-on: ubuntu-22.04 # https://github.com/swift-actions/setup-swift/issues/677
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
-      - uses: swift-actions/setup-swift@v2
+      - uses: ./.github/actions/setup-swift
         with:
-          swift-version: "6.0"
+          swift-version: "6.1"
       - run: docker run -t --rm -v $(pwd):/work -w /work ghcr.io/realm/swiftlint:0.58.2
       - run: docker run -t --rm -v $(pwd):/work ghcr.io/nicklockwood/swiftformat:0.55.5 --lint /work
       - run: swift build
@@ -487,7 +501,7 @@ jobs:
       run:
         working-directory: rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - uses: actions-rs/toolchain@v1

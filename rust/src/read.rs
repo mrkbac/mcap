@@ -21,7 +21,7 @@ use crate::{
     records::{self, op, Footer, Record},
     sans_io::{
         LinearReadEvent, LinearReader as SansIoReader, LinearReaderOptions, SummaryReadEvent,
-        SummaryReader,
+        SummaryReader, SummaryReaderOptions,
     },
     Attachment, Channel, McapError, McapResult, Message, Schema, MAGIC,
 };
@@ -59,6 +59,7 @@ impl<'a> LinearReader<'a> {
                 buf,
                 reader: SansIoReader::new_with_options(
                     LinearReaderOptions::default()
+                        .with_record_length_limit(buf.len())
                         .with_skip_end_magic(options.contains(Options::IgnoreEndMagic))
                         .with_validate_chunk_crcs(true)
                         .with_emit_chunks(true),
@@ -76,6 +77,7 @@ impl<'a> LinearReader<'a> {
                 buf,
                 reader: SansIoReader::new_with_options(
                     LinearReaderOptions::default()
+                        .with_record_length_limit(buf.len())
                         .with_skip_end_magic(true)
                         .with_skip_start_magic(true),
                 ),
@@ -569,7 +571,9 @@ impl Summary {
     pub fn read(mcap: &[u8]) -> McapResult<Option<Self>> {
         use std::io::{Read, Seek};
         let mut cursor = std::io::Cursor::new(mcap);
-        let mut summary_reader = SummaryReader::new();
+        let mut summary_reader = SummaryReader::new_with_options(
+            SummaryReaderOptions::default().with_file_size(mcap.len() as u64),
+        );
         while let Some(event) = summary_reader.next_event() {
             match event? {
                 SummaryReadEvent::ReadRequest(n) => {
@@ -660,7 +664,7 @@ impl Summary {
         &self,
         mcap: &[u8],
         index: &records::ChunkIndex,
-    ) -> McapResult<HashMap<Arc<Channel>, Vec<records::MessageIndexEntry>>> {
+    ) -> McapResult<HashMap<Arc<Channel<'_>>, Vec<records::MessageIndexEntry>>> {
         if index.message_index_offsets.is_empty() {
             // Message indexing is optional... should we be more descriptive here?
             return Err(McapError::BadIndex);
@@ -720,7 +724,7 @@ impl Summary {
         mcap: &'a [u8],
         index: &records::ChunkIndex,
         message: &records::MessageIndexEntry,
-    ) -> McapResult<Message> {
+    ) -> McapResult<Message<'_>> {
         // Get the chunk (as a header and its data) out of the file at the given offset.
         let end = (index.chunk_start_offset + index.chunk_length) as usize;
         if mcap.len() < end {

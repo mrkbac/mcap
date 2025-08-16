@@ -30,6 +30,7 @@ type filterFlags struct {
 	includeAttachments bool
 	outputCompression  string
 	chunkSize          int64
+	unchunked          bool
 }
 
 type filterOpts struct {
@@ -42,6 +43,7 @@ type filterOpts struct {
 	includeAttachments bool
 	compressionFormat  mcap.CompressionFormat
 	chunkSize          int64
+	unchunked          bool
 }
 
 // parseDateOrNanos parses a string containing either an RFC3339-formatted date with timezone
@@ -123,6 +125,7 @@ func buildFilterOptions(flags *filterFlags) (*filterOpts, error) {
 	}
 	opts.excludeTopics = excludeTopics
 	opts.chunkSize = flags.chunkSize
+	opts.unchunked = flags.unchunked
 	return opts, nil
 }
 
@@ -212,7 +215,7 @@ func filter(
 ) error {
 	mcapWriter, err := mcap.NewWriter(w, &mcap.WriterOptions{
 		Compression: opts.compressionFormat,
-		Chunked:     true,
+		Chunked:     !opts.unchunked,
 		ChunkSize:   opts.chunkSize,
 	})
 	if err != nil {
@@ -498,6 +501,7 @@ usage:
 			"zstd",
 			"compression algorithm to use on output file",
 		)
+		unchunked := compressCmd.PersistentFlags().Bool("unchunked", false, "do not chunk the output file")
 		compressCmd.Run = func(_ *cobra.Command, args []string) {
 			filterOptions, err := buildFilterOptions(&filterFlags{
 				output:             *output,
@@ -505,6 +509,7 @@ usage:
 				outputCompression:  *compression,
 				includeMetadata:    true,
 				includeAttachments: true,
+				unchunked:          *unchunked,
 			})
 			if err != nil {
 				die("configuration error: %s", err)

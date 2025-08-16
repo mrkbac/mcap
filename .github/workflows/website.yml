@@ -10,7 +10,7 @@ jobs:
   docs-home:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
 
@@ -37,7 +37,7 @@ jobs:
   docs-cpp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - run: make -C cpp ci-docs
 
@@ -52,7 +52,7 @@ jobs:
   docs-python:
     runs-on: ubuntu-22.04 # required for python 3.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v5
         with:
@@ -71,13 +71,13 @@ jobs:
           retention-days: 1
 
   docs-swift:
-    runs-on: ubuntu-22.04 # https://github.com/swift-actions/setup-swift/issues/677
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: swift-actions/setup-swift@v2
+      - uses: ./.github/actions/setup-swift
         with:
-          swift-version: "6.0"
+          swift-version: "6.1"
 
       - run: mkdir __docs__
 
@@ -112,9 +112,9 @@ jobs:
       deployments: write
     steps:
       # need checkout so that cloudflare can detect git commit
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
 
       - name: Extract API docs
         run: |
