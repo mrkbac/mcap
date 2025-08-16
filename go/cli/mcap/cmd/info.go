@@ -332,11 +332,10 @@ func init() {
 		}
 		if info == nil {
 			fmt.Println("Rebuilding info...")
-			rebuildData, err := utils.RebuildInfo(rs.(utils.PeekableReadSeeker), false)
+			info, err = utils.BuildInfo(rs)
 			if err != nil {
 				die("failed to regenerate info: %w", err)
 			}
-			info = rebuildData.Info
 		}
 		err = printInfo(os.Stdout, info)
 		if err != nil {

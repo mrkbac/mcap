@@ -6,19 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"regexp"
 	"time"
 
 	"cloud.google.com/go/storage"
-
 	"github.com/olekukonko/tablewriter"
 	"github.com/schollz/progressbar/v3"
 )
 
 var (
-	remoteFileRegex = regexp.MustCompile(`(?P<Scheme>\w+)://(?P<Bucket>[a-z0-9_.-]+(?::\d{1,5})?)/(?P<Filename>.*)`)
+	remoteFileRegex = regexp.MustCompile(`(?P<Scheme>\w+)://(?P<Bucket>[a-z0-9_.-]+)/(?P<Filename>.*)`)
 )
 
 func GetScheme(filename string) (match1 string, match2 string, match3 string) {
@@ -46,6 +44,7 @@ func StdoutRedirected() bool {
 
 func GetReader(ctx context.Context, filename string) (func() error, io.ReadSeekCloser, error) {
 	var rs io.ReadSeekCloser
+	var err error
 	closeReader := func() error { return nil }
 	scheme, bucket, path := GetScheme(filename)
 	if scheme != "" {
@@ -61,21 +60,14 @@ func GetReader(ctx context.Context, filename string) (func() error, io.ReadSeekC
 			if err != nil {
 				return closeReader, nil, fmt.Errorf("failed to build read seek closer: %w", err)
 			}
-		case "http", "https":
-			httpRS, err := NewHTTPReader(http.DefaultClient, filename)
-			if err != nil {
-				return closeReader, nil, fmt.Errorf("failed to fetch remote file: %w", err)
-			}
-			rs = NewBufferedReadSeekerCloser(httpRS, 1024*4)
 		default:
 			return closeReader, nil, fmt.Errorf("unsupported remote file scheme: %s", scheme)
 		}
 	} else {
-		rsFs, err := os.Open(path)
+		rs, err = os.Open(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open local file")
 		}
-		rs = NewBufferedReadSeekerCloser(rsFs, 1024*4)
 	}
 
 	return closeReader, rs, nil
@@ -99,12 +91,6 @@ func WithReader(ctx context.Context, filename string, f func(remote bool, rs io.
 			if err != nil {
 				return fmt.Errorf("failed to build read seek closer: %w", err)
 			}
-		case "http", "https":
-			httpRS, err := NewHTTPReader(http.DefaultClient, filename)
-			if err != nil {
-				return fmt.Errorf("failed to fetch remote file: %w", err)
-			}
-			rs = NewBufferedReadSeekerCloser(httpRS, 1024*4*4)
 		default:
 			return fmt.Errorf("unsupported remote file scheme: %s", scheme)
 		}
