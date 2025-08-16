@@ -315,18 +315,18 @@ func init() {
 		if !*rebuild {
 			reader, err := mcap.NewReader(rs)
 			if err != nil {
-				die("failed to get reader: %w", err)
+				die("failed to get reader: %s", err)
 			}
 			defer reader.Close()
 			info, err = reader.Info()
 			if err != nil {
 				if *noRebuild {
-					die("failed to read info: %w", err)
+					die("failed to read info: %s", err)
 				}
 				fmt.Println("Failed to read info from file, regenerating...")
 				_, err := rs.Seek(0, io.SeekStart)
 				if err != nil {
-					die("failed to seek: %w", err)
+					die("failed to seek: %s", err)
 				}
 			}
 		}
@@ -334,12 +334,12 @@ func init() {
 			fmt.Println("Rebuilding info...")
 			info, err = utils.BuildInfo(rs)
 			if err != nil {
-				die("failed to regenerate info: %w", err)
+				die("failed to regenerate info: %s", err)
 			}
 		}
 		err = printInfo(os.Stdout, info)
 		if err != nil {
-			die("failed to print info: %w", err)
+			die("failed to print info: %s", err)
 		}
 		rootCmd.AddCommand(infoCmd)
 	}
